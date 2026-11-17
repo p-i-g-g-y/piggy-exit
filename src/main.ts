@@ -54,6 +54,7 @@ function start(): void {
     sparkTitle: byId("spark-title"),
     sparkReady: byId("spark-ready"),
     sparkIncoming: byId("spark-incoming"),
+    sparkKill: byId("spark-kill"),
     addressForm: byId<HTMLFormElement>("address-form"),
     address: byId<HTMLInputElement>("address"),
     getFee: byId<HTMLButtonElement>("get-fee"),
@@ -278,6 +279,7 @@ function start(): void {
     const hasBitcoin = current.availableSats > 0
     ui.sparkReady.textContent = hasBitcoin ? copy.sparkReady(bitcoin(current.availableSats)) : copy.sparkEmpty
     say(ui.sparkIncoming, current.incomingSats > 0 ? copy.sparkIncoming(bitcoin(current.incomingSats)) : null)
+    say(ui.sparkKill, hasBitcoin ? copy.killsPiggy : null)
     ui.addressForm.hidden = !hasBitcoin
     show(ui.spark, ui.sparkTitle)
     if (hasBitcoin) ui.address.focus()

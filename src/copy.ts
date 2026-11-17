@@ -34,6 +34,9 @@ export const copy = {
   appGet: "Get Piggy",
   appCantUse: "I can't use the app",
 
+  // Both ways out here: taking the bitcoin without the app ends the piggy.
+  killsPiggy: "Taking your bitcoin out here kills your piggy. If Piggy is down, that happens when Piggy is back.",
+
   // Piggy doesn't, Spark does: the quick way.
   sparkTitle: "Take your bitcoin out",
   sparkReady: (amount: string): string => `${amount} is ready to go. It goes to any Bitcoin address you choose, in one payment.`,

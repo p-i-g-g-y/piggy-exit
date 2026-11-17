@@ -63,6 +63,7 @@ export function slowScreen(hooks: {
   const ui = {
     back: byId("slow-back"),
     stranded: byId("slow-stranded"),
+    kill: byId("slow-kill"),
     fund: byId("slow-fund"),
     fundLine: byId("slow-fund-line"),
     feeAddress: byId("slow-fee-address"),
@@ -134,7 +135,7 @@ export function slowScreen(hooks: {
   }
 
   const clear = () => {
-    for (const element of [ui.back, ui.stranded, ui.fund, ui.wait, ui.sweep, ui.quote, ui.note, ui.problem]) element.hidden = true
+    for (const element of [ui.back, ui.stranded, ui.kill, ui.fund, ui.wait, ui.sweep, ui.quote, ui.note, ui.problem]) element.hidden = true
     status(null)
     if (calendarUrl) URL.revokeObjectURL(calendarUrl)
     calendarUrl = null
@@ -252,6 +253,7 @@ export function slowScreen(hooks: {
       }
       say(ui.back, copy.slowBack(bitcoin(totals.backSats)))
       if (totals.strandedSats > 0) say(ui.stranded, copy.slowStranded(bitcoin(totals.strandedSats)))
+      say(ui.kill, copy.killsPiggy)
 
       const pushable = s.pieces.filter((piece) => piece.worthIt && piece.stage === "push").length
       if (pushable > 0 && pushes >= MAX_PUSHES) stuck = pushable
@@ -307,6 +309,7 @@ export function slowScreen(hooks: {
       }
       if (!until && unknown + stuck === 0 && refunds.length > 0 && refunds.every((refund) => refund.state === "sent")) {
         say(ui.back, copy.slowAlreadySent)
+        say(ui.kill, null)
       }
       return
     }
