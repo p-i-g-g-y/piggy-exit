@@ -63,9 +63,31 @@ describe("reading an exit file", () => {
     expect(file.seed).toBeNull()
   })
 
-  it("reads readable words from a download made without a password", () => {
+  it("reads the old format the shipped apps write, which carries no seed phrase", () => {
+    // Field for field what iOS 2.1.0 to 2.2.2 and Android 2.2.x write (RecoveryBundleStore).
+    const old = JSON.stringify({
+      schema: SCHEMA,
+      createdAt: "2026-10-02T08:15:00Z",
+      network: "MAINNET",
+      operatorSet: "spark-sdk",
+      walletIdentityPublicKey: IDENTITY[13],
+      sparkSdkVersion: "0.3.1",
+      appVersion: "2.2.2",
+      accountIndex: 1,
+      leaves: [{ id: "a", status: "AVAILABLE", treeNodeHex: "00", valueSats: 65_536 }],
+      nodes: [],
+      balances: { btcSats: "65536" },
+    })
+    const file = readExitFile(old)
+    expect(file.seed).toBeNull()
+    expect(file.identity).toBe(IDENTITY[13])
+    expect(file.accountIndex).toBe(1)
+    expect(file.totalSats).toBe(65_536)
+  })
+
+  it("asks for the words when a file has the never-shipped no-password block", () => {
     const file = readExitFile(minimal({ seedPhrase: { format: "words", words: "a b c", howToOpen: "x" } }))
-    expect(file.seed).toEqual({ kind: "words", words: "a b c" })
+    expect(file.seed).toBeNull()
   })
 
   it("never trusts an empty or huge entry name", () => {

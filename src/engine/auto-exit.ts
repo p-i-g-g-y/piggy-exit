@@ -1,0 +1,823 @@
+// Vendored from github.com/blinkbitcoin/spark-unilateral-exit @ 1132b77f5e42, auto-exit.ts
+// (MIT, Copyright (c) 2026 Blink Technologies LLC; see ./LICENSE). Piggy changes: v2 import paths; an onRound callback reports every leaf's state to the page.
+
+import { bytesToHex, hexToBytes } from "@noble/curves/utils.js";
+import { Transaction } from "@scure/btc-signer";
+
+import { errMessage } from "./errors.ts";
+import {
+  buildFanOutTransaction,
+  createFundingWatchLogger,
+  deriveCpfpFundingKey,
+  estimateCpfpFunding,
+  watchCpfpFunding,
+} from "./cpfp-funding.ts";
+import {
+  broadcastTransaction,
+  esploraBaseUrl,
+  getAddressUtxos,
+  getOutspend,
+  getTipHeight,
+  getTransaction,
+  submitPackage,
+} from "./esplora.ts";
+import { signPsbt } from "./sign.ts";
+import {
+  constructSparkPackages,
+  decodeDirectPathFromTreeNode,
+  type DirectPathTxs,
+} from "./spark-packages.ts";
+import type {
+  AccountNumberInput,
+  CpfpUtxo,
+  EsploraOutspend,
+  EsploraTransaction,
+  EsploraUtxo,
+  LeafPackage,
+  RecoveryBundle,
+} from "./types.ts";
+
+export class AutoExitError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AutoExitError";
+  }
+}
+
+export type LeafExitStatus =
+  | "exit-broadcast"
+  | "waiting-timelock"
+  | "pending"
+  | "failed"
+  | "skipped-uneconomical";
+
+export interface LeafExitState {
+  leafId: string;
+  status: LeafExitStatus;
+  valueSats: string | null;
+  feeSats: string;
+  netSats: string | null;
+  maturityHeight?: number;
+  refundTxid?: string;
+  lastError?: string;
+  failureCount?: number;
+}
+
+interface HeightLock {
+  blocks: number;
+  prevTxidCandidates: string[];
+}
+
+// First-input outpoint of a transaction. txidCandidates carries both byte
+// orders of the prev txid, same display-order ambiguity relativeHeightLock
+// handles.
+export interface InputOutpoint {
+  txidCandidates: string[];
+  vout: number;
+}
+
+export interface AutoExitDeps {
+  constructPackages: typeof constructSparkPackages;
+  estimateFunding: typeof estimateCpfpFunding;
+  watchFunding: typeof watchCpfpFunding;
+  fetchUtxos: (address: string, baseUrl: string) => Promise<EsploraUtxo[]>;
+  fetchTip: (baseUrl: string) => Promise<number>;
+  fetchTx: (txid: string, baseUrl: string) => Promise<EsploraTransaction | null>;
+  submitPkg: (txs: string[], baseUrl: string) => Promise<unknown>;
+  broadcastTx: (txHex: string, baseUrl: string) => Promise<string>;
+  signChild: (
+    psbtHex: string,
+    privateKey: Uint8Array,
+    parentTxHex: string,
+  ) => string;
+  txIdOf: (txHex: string) => string;
+  heightLockOf: (txHex: string) => HeightLock | null;
+  fetchOutspend: (
+    txid: string,
+    vout: number,
+    baseUrl: string,
+  ) => Promise<EsploraOutspend | null>;
+  directPathOf: (treeNodeHex: string) => DirectPathTxs | null;
+  inputOutpointOf: (txHex: string) => InputOutpoint | null;
+  sleep: (ms: number) => Promise<void>;
+}
+
+const DEFAULT_DEPS: AutoExitDeps = {
+  constructPackages: constructSparkPackages,
+  estimateFunding: estimateCpfpFunding,
+  watchFunding: watchCpfpFunding,
+  fetchUtxos: getAddressUtxos,
+  fetchTip: getTipHeight,
+  fetchTx: getTransaction,
+  submitPkg: submitPackage,
+  broadcastTx: broadcastTransaction,
+  signChild: signPsbt,
+  txIdOf: transactionIdFromHex,
+  heightLockOf: relativeHeightLock,
+  fetchOutspend: getOutspend,
+  directPathOf: decodeDirectPathFromTreeNode,
+  inputOutpointOf: firstInputOutpoint,
+  sleep: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+};
+
+export interface AutoExitOptions {
+  bundle: RecoveryBundle;
+  seed: string;
+  network: string;
+  feeRate: number;
+  esploraUrl?: string;
+  accountNumber?: AccountNumberInput;
+  minNetSats?: bigint | number | string;
+  includeUneconomical?: boolean;
+  // Split the funding UTXO into one UTXO per leaf so leaf chains broadcast in
+  // parallel (~1 block per deepest chain) at the cost of one extra
+  // transaction. Off by default: refunds are deferred until maturity, so the
+  // funding change is never locked and leaves proceed fine sequentially
+  // (~1 block per remaining package in total).
+  fanOut?: boolean;
+  bufferSats?: bigint | number | string;
+  pollIntervalMs?: number;
+  maxRounds?: number;
+  onEvent?: (message: string) => void;
+  // Piggy: every leaf's state at the start of each round and at the end, for the page's progress.
+  onRound?: (leaves: LeafExitState[]) => void;
+  deps?: Partial<AutoExitDeps>;
+}
+
+export interface AutoExitResult {
+  network: string;
+  fundingAddress: string | undefined;
+  rounds: number;
+  leaves: LeafExitState[];
+  earliestMaturityHeight: number | null;
+  // Sweep-compatible packages: one refund entry per leaf that produced one.
+  packages: LeafPackage[];
+}
+
+// How many consecutive submit failures a leaf tolerates before it is marked
+// failed and the remaining leaves continue without it.
+const MAX_LEAF_FAILURES = 5;
+// Small floor kept on every fan-out output beyond the estimated CPFP fees so
+// rounding and vsize drift cannot strand a chain one sat short.
+const PER_LEAF_FAN_OUT_BUFFER = 1_000n;
+// Ignore confirmed crumbs at the funding address that cannot pay any fee bump.
+const MIN_USABLE_UTXO_SATS = 600n;
+
+// Drives a full unilateral exit: derives the funding key, waits for funding,
+// fans the funding UTXO out to one UTXO per economical leaf, then loops
+// package -> sign -> submit-head -> wait-for-confirmation per leaf until every
+// chain has been broadcast or is blocked on its refund timelock. Stateless
+// across runs: each round reconstructs packages from live chain state (the SDK
+// skips already-broadcast transactions, and constructSparkPackages re-attaches
+// the still-pending refund so it is never dropped), so interrupting and
+// re-running is always safe.
+export async function autoExit({
+  bundle,
+  seed,
+  network,
+  feeRate,
+  esploraUrl,
+  accountNumber,
+  minNetSats = 0n,
+  includeUneconomical = false,
+  fanOut = false,
+  bufferSats = 1_000n,
+  pollIntervalMs = 30_000,
+  maxRounds = 1_000,
+  onEvent,
+  onRound,
+  deps,
+}: AutoExitOptions): Promise<AutoExitResult> {
+  const d: AutoExitDeps = { ...DEFAULT_DEPS, ...deps };
+  const baseUrl = esploraBaseUrl(network, esploraUrl);
+  const log = (message: string) => onEvent?.(message);
+  const report = () => onRound?.([...states.values()].map((s) => ({ ...s })));
+
+  const key = deriveCpfpFundingKey({ seed, network, accountNumber });
+  if (!key.address) throw new AutoExitError("Funding key produced no address");
+  const estimate = await d.estimateFunding({
+    bundle,
+    feeRate,
+    fundingScript: key.script,
+    fundingPublicKey: key.publicKey,
+    bufferSats,
+    minNetSats,
+    includeUneconomical,
+  });
+  log(
+    `Funding address ${key.address} (${key.derivationPath}); required ~${estimate.requiredSats} sats for ${estimate.perLeaf.filter((l) => l.economical || includeUneconomical).length} leaf/leaves`,
+  );
+
+  const states = new Map<string, LeafExitState>();
+  const refundHexes = new Map<string, string>();
+  for (const leaf of estimate.perLeaf) {
+    if (!leaf.leafId) continue;
+    states.set(leaf.leafId, {
+      leafId: leaf.leafId,
+      status:
+        leaf.economical || includeUneconomical ? "pending" : "skipped-uneconomical",
+      valueSats: leaf.valueSats,
+      feeSats: leaf.feeSats,
+      netSats: leaf.netSats,
+    });
+  }
+  const skipped = [...states.values()].filter(
+    (s) => s.status === "skipped-uneconomical",
+  );
+  if (skipped.length > 0) {
+    log(
+      `Skipping ${skipped.length} uneconomical leaf/leaves (value does not cover CPFP + sweep fees): ${skipped.map((s) => `${s.leafId} (net ${s.netSats} sats)`).join(", ")}`,
+    );
+  }
+
+  const leafById = new Map(bundle.leaves.map((leaf) => [leaf.id, leaf]));
+  const pendingLeaves = () =>
+    [...states.values()].filter((s) => s.status === "pending");
+
+  // Ensure initial funding exists before starting rounds.
+  let utxos = await confirmedFundingUtxosWithRetry(
+    d,
+    key.address,
+    baseUrl,
+    pollIntervalMs,
+    log,
+  );
+  if (utxos.length === 0) {
+    log(
+      `No confirmed funding at ${key.address}; send at least ${estimate.requiredSats} sats and leave this running`,
+    );
+    await d.watchFunding({
+      address: key.address,
+      script: key.script,
+      publicKey: key.publicKey,
+      network,
+      esploraUrl,
+      minSats: estimate.requiredSats,
+      pollIntervalMs,
+      // Shared announcer: reports incoming/underfunded UTXOs and the
+      // split-funding consolidation hint, same as the watch-cpfp command.
+      onPoll: createFundingWatchLogger({
+        address: key.address,
+        minSats: estimate.requiredSats,
+        log,
+      }),
+    });
+    utxos = await confirmedFundingUtxosWithRetry(
+      d,
+      key.address,
+      baseUrl,
+      pollIntervalMs,
+      log,
+    );
+  }
+
+  let rounds = 0;
+  while (pendingLeaves().length > 0) {
+    report();
+    rounds += 1;
+    if (rounds > maxRounds) {
+      throw new AutoExitError(
+        `Exceeded ${maxRounds} rounds with leaves still pending: ${pendingLeaves()
+          .map((s) => s.leafId)
+          .join(", ")}`,
+      );
+    }
+    utxos = await confirmedFundingUtxosWithRetry(
+      d,
+      key.address,
+      baseUrl,
+      pollIntervalMs,
+      log,
+    );
+    const active = pendingLeaves();
+    if (utxos.length === 0) {
+      log("No spendable confirmed funding UTXO yet; waiting");
+      await d.sleep(pollIntervalMs);
+      continue;
+    }
+
+    // One UTXO per leaf keeps leaf chains independent (the SDK chains change
+    // per package internally). Fan out once when there are fewer UTXOs than
+    // active leaves. Without --fan-out, leaves share the funding chain and
+    // broadcast sequentially, which is fine because timelocked refunds are
+    // deferred (their change never blocks the chain).
+    if (fanOut && utxos.length < active.length && active.length > 1) {
+      const amounts = active.map(
+        (s) => BigInt(s.feeSats) + PER_LEAF_FAN_OUT_BUFFER,
+      );
+      const fanOutTx = buildFanOutTransaction({
+        utxos: utxos.map((u) => toCpfpUtxo(u, key.script, key.publicKey)),
+        amounts,
+        privateKey: key.privateKey,
+        feeRate,
+      });
+      log(
+        `Splitting funding into ${amounts.length} per-leaf UTXOs (txid ${fanOutTx.txid})`,
+      );
+      await d.broadcastTx(fanOutTx.txHex, baseUrl);
+      if (!(await waitForConfirmation(d, fanOutTx.txid, baseUrl, pollIntervalMs, log))) {
+        log(
+          `Fan-out ${fanOutTx.txid} disappeared from the mempool (likely evicted); rebuilding next round`,
+        );
+      }
+      continue;
+    }
+
+    // Largest UTXO funds the leaf with the largest remaining fees.
+    const sortedActive = [...active].sort((a, b) =>
+      Number(BigInt(b.feeSats) - BigInt(a.feeSats)),
+    );
+    const submitted: Array<{ state: LeafExitState; parentTxid: string }> = [];
+    let waitingDependency = false;
+    for (let i = 0; i < sortedActive.length; i += 1) {
+      const state = sortedActive[i]!;
+      const assignedUtxo = utxos[i];
+      // Completion detection does not spend funding, so it can safely reuse
+      // the first UTXO while checking leaves beyond the number of available
+      // UTXOs. A still-pending package may only proceed with its own assigned
+      // UTXO; that guard sits immediately after the completion check below.
+      const constructionUtxo = assignedUtxo ?? utxos[0]!;
+      const leaf = leafById.get(state.leafId);
+      if (!leaf) {
+        state.status = "failed";
+        state.lastError = "Leaf missing from bundle";
+        continue;
+      }
+      let packages: LeafPackage[];
+      try {
+        packages = await d.constructPackages({
+          bundle: { ...bundle, leaves: [leaf] },
+          cpfpUtxos: [toCpfpUtxo(constructionUtxo, key.script, key.publicKey)],
+          feeRate,
+        });
+      } catch (error) {
+        recordLeafError(state, error, log);
+        continue;
+      }
+      const sweepTx = packages[0]?.sweepTx;
+      if (sweepTx) {
+        const sweepTxid = d.txIdOf(sweepTx);
+        refundHexes.set(state.leafId, sweepTx);
+        state.refundTxid = sweepTxid;
+        state.status = "exit-broadcast";
+        log(
+          `Leaf ${state.leafId}: refund variant already broadcast (${sweepTxid}); ready to sweep`,
+        );
+        continue;
+      }
+      if (!assignedUtxo) {
+        waitingDependency = true;
+        break;
+      }
+      const txPackages = packages[0]?.txPackages ?? [];
+      if (txPackages.length === 0) {
+        // Empty means the exit chain AND the refund are on chain: the SDK omits
+        // broadcast nodes, and constructSparkPackages re-attaches a refund that
+        // is not yet broadcast, so an empty list here is the genuine
+        // "exit complete" signal rather than a dropped refund.
+        state.status = "exit-broadcast";
+        log(`Leaf ${state.leafId}: all transactions broadcast`);
+        continue;
+      }
+      const last = txPackages[txPackages.length - 1]!;
+      if (last.tx) {
+        refundHexes.set(state.leafId, last.tx);
+        state.refundTxid = d.txIdOf(last.tx);
+      }
+
+      const head = txPackages[0]!;
+      if (!head.tx || !head.feeBumpPsbt) {
+        recordLeafError(state, new AutoExitError("Package head missing tx or PSBT"), log);
+        continue;
+      }
+      const parentTxid = d.txIdOf(head.tx);
+
+      // Refunds (and any CSV-locked transaction) must wait out their relative
+      // timelock; defer the leaf and report when it matures.
+      const lock = d.heightLockOf(head.tx);
+      if (lock) {
+        const maturity = await lockMaturityHeight(d, lock, baseUrl);
+        let tip: number;
+        try {
+          tip = await d.fetchTip(baseUrl);
+        } catch (error) {
+          waitingDependency = true;
+          log(`Esplora tip fetch failed (${errMessage(error)}); retrying`);
+          continue;
+        }
+        if (maturity === null) {
+          waitingDependency = true;
+          log(`Leaf ${state.leafId}: timelocked parent not confirmed yet; waiting`);
+          continue;
+        }
+        if (tip + 1 < maturity) {
+          state.status = "waiting-timelock";
+          state.maturityHeight = maturity;
+          log(
+            `Leaf ${state.leafId}: refund timelocked until block ${maturity} (${maturity - tip} blocks away); re-run after maturity`,
+          );
+          continue;
+        }
+      }
+
+      try {
+        const signedChild = d.signChild(
+          head.feeBumpPsbt,
+          key.privateKey,
+          head.tx,
+        );
+        await d.submitPkg([head.tx, signedChild], baseUrl);
+        submitted.push({ state, parentTxid });
+        log(
+          `Leaf ${state.leafId}: submitted package (parent ${parentTxid}, ${txPackages.length - 1} remaining after confirmation)`,
+        );
+      } catch (error) {
+        const message = errMessage(error);
+        if (/missingorspent/i.test(message)) {
+          // A missing head input can mean two very different things: its
+          // parent is simply not confirmed yet, or the operator's chainwatcher
+          // already spent it via the leaf's direct-path transactions. Resolve
+          // which before deferring; deferring a lost race resubmits a dead
+          // package forever.
+          let resolved = false;
+          try {
+            resolved = await resolveDirectPathRace({
+              d,
+              state,
+              treeNodeHex: leaf.treeNodeHex,
+              headTxHex: head.tx,
+              baseUrl,
+              log,
+              refundHexes,
+            });
+          } catch (raceError) {
+            // Chain state is unknown, not "dependency unconfirmed": count the
+            // failure so a persistent lookup outage surfaces instead of the
+            // leaf silently retrying forever.
+            recordLeafError(
+              state,
+              new AutoExitError(`direct-path check failed: ${errMessage(raceError)}`),
+              log,
+            );
+            continue;
+          }
+          if (resolved) continue;
+        }
+        if (/missingorspent|TRUC|already in mempool|txn-already|bip68|non-final/i.test(message)) {
+          // Dependency not confirmed yet or already submitted; try again next round.
+          waitingDependency = true;
+          log(`Leaf ${state.leafId}: deferred (${message})`);
+        } else {
+          recordLeafError(state, error, log);
+        }
+      }
+    }
+
+    if (submitted.length === 0) {
+      // Leaves still pending are blocked on a dependency confirming or on a
+      // transient error (waitingDependency); anything terminal already left
+      // "pending" status. Wait a poll interval and re-evaluate.
+      if (pendingLeaves().length === 0) break;
+      await d.sleep(pollIntervalMs);
+      continue;
+    }
+
+    for (const entry of submitted) {
+      const confirmed = await waitForConfirmation(
+        d,
+        entry.parentTxid,
+        baseUrl,
+        pollIntervalMs,
+        log,
+      );
+      if (confirmed) {
+        log(`Leaf ${entry.state.leafId}: package confirmed (${entry.parentTxid})`);
+      } else {
+        // Evicted (e.g. fee spike outbid the package): the leaf stays pending
+        // and the next round rebuilds and resubmits it from chain state.
+        log(
+          `Leaf ${entry.state.leafId}: package ${entry.parentTxid} disappeared from the mempool (likely evicted); will rebuild and resubmit`,
+        );
+      }
+    }
+  }
+
+  report();
+  const leaves = [...states.values()];
+  const maturities = leaves
+    .filter((s) => s.status === "waiting-timelock" && s.maturityHeight)
+    .map((s) => s.maturityHeight!);
+  return {
+    network,
+    fundingAddress: key.address,
+    rounds,
+    leaves,
+    earliestMaturityHeight: maturities.length > 0 ? Math.min(...maturities) : null,
+    packages: leaves
+      .filter((s) => refundHexes.has(s.leafId))
+      .map((s) => ({
+        leafId: s.leafId,
+        txPackages: [{ tx: refundHexes.get(s.leafId)! }],
+      })),
+  };
+}
+
+function recordLeafError(
+  state: LeafExitState,
+  error: unknown,
+  log: (message: string) => void,
+) {
+  const message = errMessage(error);
+  state.lastError = message;
+  state.failureCount = (state.failureCount ?? 0) + 1;
+  if (state.failureCount >= MAX_LEAF_FAILURES) {
+    state.status = "failed";
+    log(`Leaf ${state.leafId}: giving up after ${MAX_LEAF_FAILURES} failures (${message})`);
+  } else {
+    log(`Leaf ${state.leafId}: error (${message}); will retry`);
+  }
+}
+
+async function confirmedFundingUtxos(
+  d: AutoExitDeps,
+  address: string,
+  baseUrl: string,
+): Promise<EsploraUtxo[]> {
+  const utxos = await d.fetchUtxos(address, baseUrl);
+  return utxos
+    .filter(
+      (u) => u?.status?.confirmed && BigInt(u.value ?? 0) >= MIN_USABLE_UTXO_SATS,
+    )
+    .sort((a, b) => Number(BigInt(b.value) - BigInt(a.value)));
+}
+
+async function confirmedFundingUtxosWithRetry(
+  d: AutoExitDeps,
+  address: string,
+  baseUrl: string,
+  pollIntervalMs: number,
+  log: (message: string) => void,
+): Promise<EsploraUtxo[]> {
+  let consecutiveErrors = 0;
+  for (;;) {
+    try {
+      return await confirmedFundingUtxos(d, address, baseUrl);
+    } catch (error) {
+      consecutiveErrors += 1;
+      log(`Esplora funding fetch failed (${errMessage(error)}); retrying`);
+      const backoff = Math.min(2 ** consecutiveErrors, 8);
+      await d.sleep(pollIntervalMs * backoff);
+    }
+  }
+}
+
+function toCpfpUtxo(
+  utxo: EsploraUtxo,
+  script: string,
+  publicKey: string,
+): CpfpUtxo {
+  return {
+    txid: utxo.txid,
+    vout: utxo.vout,
+    value: BigInt(utxo.value),
+    script,
+    publicKey,
+  };
+}
+
+async function lockMaturityHeight(
+  d: AutoExitDeps,
+  lock: HeightLock,
+  baseUrl: string,
+): Promise<number | null> {
+  for (const candidate of lock.prevTxidCandidates) {
+    let tx: EsploraTransaction | null = null;
+    try {
+      tx = await d.fetchTx(candidate, baseUrl);
+    } catch {
+      continue;
+    }
+    if (tx?.status?.confirmed && Number.isInteger(tx.status.block_height)) {
+      return tx.status.block_height! + lock.blocks;
+    }
+    if (tx) return null; // known but unconfirmed
+  }
+  return null;
+}
+
+// Resolves the two meanings of a bad-txns-inputs-missingorspent rejection for
+// a leaf's head transaction. When the head's input outpoint is simply unspent
+// (its parent is unknown or unconfirmed) this returns false and the caller
+// defers the leaf as before. When the outpoint was spent by the leaf's known
+// directTx, the operator's chainwatcher won the broadcast race: the CPFP chain
+// can never confirm, so pivot the leaf to the pre-signed, self-fee-paying
+// directRefundTx. It is tracked exactly like a CPFP refund (recorded in
+// refundHexes so the sweep-compatible packages file points at the transaction
+// that will actually pay out; deferred while its CSV lock matures; broadcast
+// plainly once mature, since its fee is baked in and no anchor child exists).
+// An outpoint spent by anything else fails the leaf loudly: the bundle no
+// longer describes reality and resubmitting cannot fix that.
+async function resolveDirectPathRace({
+  d,
+  state,
+  treeNodeHex,
+  headTxHex,
+  baseUrl,
+  log,
+  refundHexes,
+}: {
+  d: AutoExitDeps;
+  state: LeafExitState;
+  treeNodeHex: string;
+  headTxHex: string;
+  baseUrl: string;
+  log: (message: string) => void;
+  refundHexes: Map<string, string>;
+}): Promise<boolean> {
+  const direct = d.directPathOf(treeNodeHex);
+  if (!direct) return false;
+  const outpoint = d.inputOutpointOf(headTxHex);
+  if (!outpoint) return false;
+
+  let spender: string | undefined;
+  let definitive = false;
+  let lookupError: unknown;
+  for (const candidate of outpoint.txidCandidates) {
+    let outspend: EsploraOutspend | null = null;
+    try {
+      outspend = await d.fetchOutspend(candidate, outpoint.vout, baseUrl);
+    } catch (error) {
+      // A failed lookup is not evidence the outpoint is unspent; keep the
+      // error and let the other byte-order candidate try to answer.
+      lookupError = error;
+      continue;
+    }
+    if (!outspend) continue; // unknown txid: wrong byte order (or parent not seen)
+    definitive = true;
+    if (outspend.spent && outspend.txid) spender = outspend.txid;
+    break;
+  }
+  // Without a definitive response the chain state is unknown, not unspent.
+  // Propagate the lookup failure so the caller counts it instead of treating
+  // the missingorspent rejection as an ordinary dependency wait forever.
+  if (!definitive && lookupError !== undefined) throw lookupError;
+  if (!spender) return false; // outpoint unspent: ordinary dependency wait
+  if (spender === d.txIdOf(headTxHex)) return false; // our own head is on chain
+
+  if (spender !== direct.directTxid) {
+    state.status = "failed";
+    state.lastError = `node input spent by unexpected transaction ${spender}`;
+    log(
+      `Leaf ${state.leafId}: node input spent by ${spender}, which is neither the bundle's ` +
+        `node tx nor its direct-path variant (${direct.directTxid}); the bundle may be ` +
+        `stale. Investigate before retrying`,
+    );
+    return true;
+  }
+
+  refundHexes.set(state.leafId, direct.directRefundTxHex);
+  state.refundTxid = direct.directRefundTxid;
+
+  let existing: EsploraTransaction | null = null;
+  try {
+    existing = await d.fetchTx(direct.directRefundTxid, baseUrl);
+  } catch {
+    existing = null;
+  }
+  if (existing) {
+    state.status = "exit-broadcast";
+    log(
+      `Leaf ${state.leafId}: operator completed the exit via direct path ${direct.directTxid}; ` +
+        `direct refund ${direct.directRefundTxid} is ` +
+        `${existing.status?.confirmed ? "confirmed" : "in the mempool"}. Sweep once confirmed`,
+    );
+    return true;
+  }
+
+  const lock = d.heightLockOf(direct.directRefundTxHex);
+  if (lock) {
+    const maturity = await lockMaturityHeight(d, lock, baseUrl);
+    if (maturity === null) {
+      // directTx spent the input but is not confirmed yet; the leaf stays
+      // pending and the next round re-checks.
+      log(
+        `Leaf ${state.leafId}: direct path ${direct.directTxid} spent the node input but is ` +
+          `not confirmed yet; waiting`,
+      );
+      return true;
+    }
+    const tip = await d.fetchTip(baseUrl);
+    if (tip + 1 < maturity) {
+      state.status = "waiting-timelock";
+      state.maturityHeight = maturity;
+      log(
+        `Leaf ${state.leafId}: operator completed the exit via direct path ${direct.directTxid}; ` +
+          `direct refund timelocked until block ${maturity} (${maturity - tip} blocks away); ` +
+          `re-run after maturity`,
+      );
+      return true;
+    }
+  }
+
+  try {
+    await d.broadcastTx(direct.directRefundTxHex, baseUrl);
+    state.status = "exit-broadcast";
+    log(
+      `Leaf ${state.leafId}: broadcast mature direct refund ${direct.directRefundTxid} ` +
+        `(self-paying, no CPFP needed); sweep once confirmed`,
+    );
+  } catch (error) {
+    recordLeafError(state, error, log);
+  }
+  return true;
+}
+
+// How many consecutive not-found polls before a submitted transaction is
+// treated as evicted from the mempool. Generous because Esplora may briefly
+// 404 a transaction right after submission while it propagates.
+const EVICTION_NOT_FOUND_POLLS = 20;
+
+// Resolves true when the transaction confirms, false when it has been absent
+// from the mempool for EVICTION_NOT_FOUND_POLLS consecutive polls (evicted,
+// e.g. outbid during a fee spike). Waiting forever on an evicted transaction
+// would stall the whole recovery with no signal, so eviction is surfaced to
+// the caller, which rebuilds and resubmits on the next round.
+async function waitForConfirmation(
+  d: AutoExitDeps,
+  txid: string,
+  baseUrl: string,
+  pollIntervalMs: number,
+  log: (message: string) => void,
+): Promise<boolean> {
+  let consecutiveErrors = 0;
+  let consecutiveNotFound = 0;
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      const tx = await d.fetchTx(txid, baseUrl);
+      consecutiveErrors = 0;
+      if (tx?.status?.confirmed) return true;
+      consecutiveNotFound = tx === null ? consecutiveNotFound + 1 : 0;
+      if (consecutiveNotFound >= EVICTION_NOT_FOUND_POLLS) return false;
+      if (attempt % 10 === 0) log(`Still waiting for ${txid} to confirm`);
+    } catch (error) {
+      consecutiveErrors += 1;
+      const message = errMessage(error);
+      log(`Esplora poll failed (${message}); retrying`);
+    }
+    const backoff = Math.min(2 ** consecutiveErrors, 8);
+    await d.sleep(pollIntervalMs * backoff);
+  }
+}
+
+export function transactionIdFromHex(txHex: string): string {
+  return parseTransaction(txHex).id;
+}
+
+// Both display byte orders of a parsed input's prev txid. Parsers expose the
+// txid in serialization order, Esplora expects display order; callers probe
+// with both candidates and keep the one the endpoint recognizes.
+function txidByteOrderCandidates(rawTxid: Uint8Array | ArrayLike<number>): string[] {
+  const hex = bytesToHex(
+    rawTxid instanceof Uint8Array ? rawTxid : new Uint8Array(rawTxid),
+  );
+  return [hex, bytesToHex(new Uint8Array([...hexToBytes(hex)].reverse()))];
+}
+
+// Reads a BIP68 relative height lock from the transaction's first input.
+// Returns null when the sequence disables relative locks or encodes a
+// time-based lock (Spark refunds use height-based locks).
+export function relativeHeightLock(txHex: string): HeightLock | null {
+  const tx = parseTransaction(txHex);
+  const input = tx.getInput(0);
+  const sequence = input?.sequence;
+  if (sequence === undefined || sequence >= 0x80000000) return null;
+  if ((sequence & 0x00400000) !== 0) return null;
+  const blocks = sequence & 0xffff;
+  if (blocks === 0) return null;
+  const rawTxid = input?.txid;
+  return {
+    blocks,
+    prevTxidCandidates: rawTxid ? txidByteOrderCandidates(rawTxid) : [],
+  };
+}
+
+// First-input outpoint with both txid byte orders as candidates, mirroring
+// relativeHeightLock's handling of the display-order ambiguity.
+export function firstInputOutpoint(txHex: string): InputOutpoint | null {
+  const tx = parseTransaction(txHex);
+  const input = tx.getInput(0);
+  const rawTxid = input?.txid;
+  if (!rawTxid) return null;
+  return {
+    txidCandidates: txidByteOrderCandidates(rawTxid),
+    vout: input?.index ?? 0,
+  };
+}
+
+function parseTransaction(txHex: string): Transaction {
+  return Transaction.fromRaw(hexToBytes(txHex), {
+    allowUnknownOutputs: true,
+    allowUnknownInputs: true,
+    disableScriptCheck: true,
+  });
+}

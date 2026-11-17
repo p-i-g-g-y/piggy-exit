@@ -132,7 +132,50 @@ textarea {
   resize: vertical;
 }
 
-button {
+.button {
+  text-align: center;
+  text-decoration: none;
+  box-sizing: border-box;
+}
+
+.txid {
+  font: 0.85rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  word-break: break-all;
+  color: var(--muted);
+}
+
+.txids {
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.txids li {
+  margin-bottom: 8px;
+}
+
+a.txid {
+  color: var(--accent);
+}
+
+/* The fee address: easy to check by eye, one tap selects all of it. */
+.address {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  font: 0.95rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  word-break: break-all;
+  user-select: all;
+  -webkit-user-select: all;
+}
+
+#start-over {
+  margin-top: 20px;
+}
+
+button,
+.button {
   display: block;
   width: 100%;
   min-height: 48px;
@@ -149,13 +192,15 @@ button:disabled {
   cursor: progress;
 }
 
-.primary {
+.primary,
+a.primary {
   border: 0;
   background: var(--accent);
   color: var(--accent-text);
 }
 
-.secondary {
+.secondary,
+a.secondary {
   border: 1px solid var(--line);
   background: transparent;
   color: var(--text);

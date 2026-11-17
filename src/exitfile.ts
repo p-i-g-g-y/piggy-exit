@@ -17,14 +17,16 @@ export interface ExitFile {
   leafCount: number
   /** Total bitcoin in the file's leaves, in sats (the format's unit; the page shows ₿ amounts). */
   totalSats: number
+  /**
+   * Null for the old format, which the person opens by typing their 12 words: every file the
+   * shipped apps wrote (up to 2.2.x), and a newer app's file before the seed phrase is locked
+   * into it. The no-password `"words"` download never shipped, so it reads as null too.
+   */
   seed: SeedBlock | null
 }
 
-export type SeedBlock =
-  /** Locked with the person's password (age, scrypt). */
-  | { kind: "locked"; armored: string; passwordUser: string | null }
-  /** Readable words, only ever in a file downloaded on purpose without a password. */
-  | { kind: "words"; words: string }
+/** The seed phrase, locked with the person's password (age, scrypt). */
+export type SeedBlock = { kind: "locked"; armored: string; passwordUser: string | null }
 
 export type ExitFileProblem = "notExitFile" | "testNetwork"
 
@@ -78,9 +80,6 @@ function readSeed(block: unknown): SeedBlock | null {
   if (block.format === "age" && typeof block.age === "string" && block.age.includes("BEGIN AGE ENCRYPTED FILE")) {
     const user = typeof block.passwordUser === "string" ? block.passwordUser.trim() : ""
     return { kind: "locked", armored: block.age, passwordUser: user.length > 0 && user.length <= 200 ? user : null }
-  }
-  if (block.format === "words" && typeof block.words === "string" && block.words.trim().length > 0) {
-    return { kind: "words", words: block.words }
   }
   return null
 }

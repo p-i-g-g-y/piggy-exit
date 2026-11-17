@@ -1,0 +1,417 @@
+// Vendored from github.com/blinkbitcoin/spark-unilateral-exit @ 1132b77f5e42, sweep.ts
+// (MIT, Copyright (c) 2026 Blink Technologies LLC; see ./LICENSE). Piggy changes: v2 import paths only.
+
+import { secp256k1 } from "@noble/curves/secp256k1.js";
+import { bytesToHex, hexToBytes } from "@noble/curves/utils.js";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { HDKey } from "@scure/bip32";
+import { mnemonicToSeedSync, validateMnemonic } from "@scure/bip39";
+import { wordlist } from "@scure/bip39/wordlists/english.js";
+import { NETWORK, TEST_NETWORK, Transaction, p2tr } from "@scure/btc-signer";
+
+import type {
+  AccountNumberInput,
+  LeafPackage,
+  LeafSweep,
+  PackageFile,
+  SweepResult,
+  TxPackage,
+} from "./types.ts";
+
+type BtcNetwork = typeof NETWORK;
+
+interface NetworkConfig {
+  btc: BtcNetwork;
+  coinType: number;
+  defaultAccounts: number[];
+}
+
+interface RefundKeyCandidate {
+  path: string;
+  label: string;
+  privateKey: Uint8Array;
+  xonlyPublicKey: Uint8Array;
+  address: string | undefined;
+  script: Uint8Array;
+}
+
+interface RefundOutput {
+  amount: bigint;
+  script: Uint8Array;
+}
+
+const REGTEST_NETWORK: BtcNetwork = { ...TEST_NETWORK, bech32: "bcrt" };
+const NETWORKS = new Map<string, NetworkConfig>([
+  ["MAINNET", { btc: NETWORK, coinType: 0, defaultAccounts: [1] }],
+  ["TESTNET", { btc: TEST_NETWORK, coinType: 1, defaultAccounts: [1] }],
+  ["SIGNET", { btc: TEST_NETWORK, coinType: 1, defaultAccounts: [1] }],
+  ["REGTEST", { btc: REGTEST_NETWORK, coinType: 1, defaultAccounts: [0, 1] }],
+  ["LOCAL", { btc: REGTEST_NETWORK, coinType: 1, defaultAccounts: [0, 1] }],
+]);
+
+export class SweepError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SweepError";
+  }
+}
+
+interface ConstructSweepTransactionsOptions {
+  seed: string;
+  passphrase?: string;
+  network: string;
+  packages: unknown;
+  destination: string;
+  feeRate: number;
+  accountNumber?: AccountNumberInput;
+  dustLimitSats?: bigint | number;
+}
+
+export function constructSweepTransactions({
+  seed,
+  passphrase = "",
+  network,
+  packages,
+  destination,
+  feeRate,
+  accountNumber,
+  dustLimitSats = 330n,
+}: ConstructSweepTransactionsOptions): SweepResult {
+  const networkConfig = networkConfigFor(network);
+  const packageJson = validatePackageJson(packages);
+  const destinationAddress = String(destination ?? "").trim();
+  if (!destinationAddress) {
+    throw new SweepError(
+      "--destination is required; the untrusted package JSON destination is never used",
+    );
+  }
+  validateAddress(destinationAddress, networkConfig.btc);
+  const normalizedFeeRate = validateFeeRate(feeRate);
+  const seedBytes = parseSeed(seed, passphrase);
+  const root = HDKey.fromMasterSeed(seedBytes);
+  const accounts = candidateAccounts(accountNumber, networkConfig.defaultAccounts);
+
+  const sweeps: LeafSweep[] = [];
+  for (const leafPackage of packageJson.packages) {
+    // A completed alternate branch is persisted as sweepTx because the SDK's
+    // txPackages can still describe the now-impossible branch. Prefer that
+    // exact on-chain terminal refund in both auto-exit and standalone
+    // package -> sweep flows.
+    const refundTxHex = leafPackage.sweepTx || lastTxPackage(leafPackage)?.tx;
+    if (!refundTxHex) {
+      throw new SweepError(`Leaf ${leafPackage?.leafId ?? "unknown"} has no refund tx`);
+    }
+    sweeps.push(
+      constructLeafSweep({
+        leafId: leafPackage.leafId,
+        refundTxHex,
+        root,
+        accounts,
+        networkConfig,
+        destination: destinationAddress,
+        feeRate: normalizedFeeRate,
+        dustLimitSats: BigInt(dustLimitSats),
+      }),
+    );
+  }
+
+  return {
+    destination: destinationAddress,
+    feeRateSatPerVbyte: normalizedFeeRate,
+    sweeps,
+  };
+}
+
+export function parseSeed(input: string, passphrase = ""): Uint8Array {
+  const value = String(input ?? "").trim();
+  if (!value) throw new SweepError("Spark seed or mnemonic is required");
+  if (validateMnemonic(value, wordlist)) {
+    return mnemonicToSeedSync(value, passphrase);
+  }
+  const hex = value.startsWith("0x") ? value.slice(2) : value;
+  if (!/^[0-9a-fA-F]+$/.test(hex)) {
+    throw new SweepError("Seed must be a BIP-39 mnemonic or 64-byte hex seed");
+  }
+  const seed = hexToBytes(hex);
+  if (seed.length !== 64) {
+    throw new SweepError(`Hex seed must decode to 64 bytes, got ${seed.length}`);
+  }
+  return seed;
+}
+
+export function deriveRefundKeyCandidates({
+  seed,
+  network,
+  leafId,
+  accountNumber,
+}: {
+  seed: string;
+  network: string;
+  leafId: string;
+  accountNumber?: AccountNumberInput;
+}): RefundKeyCandidate[] {
+  const networkConfig = networkConfigFor(network);
+  const root = HDKey.fromMasterSeed(parseSeed(seed));
+  return refundKeyCandidates({
+    root,
+    leafId,
+    accounts: candidateAccounts(accountNumber, networkConfig.defaultAccounts),
+    coinType: networkConfig.coinType,
+    btcNetwork: networkConfig.btc,
+  });
+}
+
+function constructLeafSweep({
+  leafId,
+  refundTxHex,
+  root,
+  accounts,
+  networkConfig,
+  destination,
+  feeRate,
+  dustLimitSats,
+}: {
+  leafId: string | null | undefined;
+  refundTxHex: string;
+  root: HDKey;
+  accounts: number[];
+  networkConfig: NetworkConfig;
+  destination: string;
+  feeRate: number;
+  dustLimitSats: bigint;
+}): LeafSweep {
+  const refundTx = Transaction.fromRaw(hexToBytes(refundTxHex), {
+    allowUnknownOutputs: true,
+  });
+  const refundOutput = refundTx.getOutput(0);
+  if (!refundOutput?.script || refundOutput.amount === undefined) {
+    throw new SweepError(`Refund tx for leaf ${leafId} has no output 0`);
+  }
+  const output: RefundOutput = {
+    amount: refundOutput.amount,
+    script: refundOutput.script,
+  };
+  const matchingKey = findMatchingRefundKey({
+    root,
+    leafId,
+    script: output.script,
+    accounts,
+    coinType: networkConfig.coinType,
+    btcNetwork: networkConfig.btc,
+  });
+  if (!matchingKey) {
+    throw new SweepError(
+      `No supported seed derivation path matched refund output for leaf ${leafId}`,
+    );
+  }
+
+  const firstPass = buildSignedSweepTx({
+    refundTxid: refundTx.id,
+    refundOutput: output,
+    destination,
+    feeSats: 1n,
+    privateKey: matchingKey.privateKey,
+    tapInternalKey: matchingKey.xonlyPublicKey,
+    btcNetwork: networkConfig.btc,
+  });
+  const feeSats = BigInt(Math.ceil(Number(firstPass.vsize) * feeRate));
+  if (output.amount <= feeSats + dustLimitSats) {
+    throw new SweepError(
+      `Refund output for leaf ${leafId} is too small to sweep: value=${output.amount} fee=${feeSats} dustLimit=${dustLimitSats}`,
+    );
+  }
+  const finalSweep = buildSignedSweepTx({
+    refundTxid: refundTx.id,
+    refundOutput: output,
+    destination,
+    feeSats,
+    privateKey: matchingKey.privateKey,
+    tapInternalKey: matchingKey.xonlyPublicKey,
+    btcNetwork: networkConfig.btc,
+  });
+
+  return {
+    leafId,
+    refundTxid: refundTx.id,
+    refundVout: 0,
+    refundValueSats: output.amount.toString(),
+    refundAddress: matchingKey.address,
+    derivationPath: matchingKey.path,
+    sweepTxid: finalSweep.txid,
+    sweepTx: finalSweep.hex,
+    feeSats: finalSweep.fee.toString(),
+    vsize: finalSweep.vsize,
+  };
+}
+
+function buildSignedSweepTx({
+  refundTxid,
+  refundOutput,
+  destination,
+  feeSats,
+  privateKey,
+  tapInternalKey,
+  btcNetwork,
+}: {
+  refundTxid: string;
+  refundOutput: RefundOutput;
+  destination: string;
+  feeSats: bigint;
+  privateKey: Uint8Array;
+  tapInternalKey: Uint8Array;
+  btcNetwork: BtcNetwork;
+}): { txid: string; hex: string; fee: bigint; vsize: number } {
+  const outputAmount = refundOutput.amount - feeSats;
+  if (outputAmount <= 0n) {
+    throw new SweepError("Sweep fee is greater than or equal to refund output value");
+  }
+  const tx = new Transaction({ allowUnknownOutputs: true });
+  tx.addInput({
+    txid: refundTxid,
+    index: 0,
+    witnessUtxo: {
+      amount: refundOutput.amount,
+      script: refundOutput.script,
+    },
+    tapInternalKey,
+  });
+  tx.addOutputAddress(destination, outputAmount, btcNetwork);
+  tx.sign(privateKey);
+  tx.finalize();
+  return { txid: tx.id, hex: tx.hex, fee: tx.fee, vsize: tx.vsize };
+}
+
+function findMatchingRefundKey({
+  root,
+  leafId,
+  script,
+  accounts,
+  coinType,
+  btcNetwork,
+}: {
+  root: HDKey;
+  leafId: string | null | undefined;
+  script: Uint8Array;
+  accounts: number[];
+  coinType: number;
+  btcNetwork: BtcNetwork;
+}): RefundKeyCandidate | undefined {
+  return refundKeyCandidates({ root, leafId, accounts, coinType, btcNetwork }).find(
+    (candidate) => bytesToHex(candidate.script) === bytesToHex(script),
+  );
+}
+
+function refundKeyCandidates({
+  root,
+  leafId,
+  accounts,
+  coinType,
+  btcNetwork,
+}: {
+  root: HDKey;
+  leafId: string | null | undefined;
+  accounts: number[];
+  coinType: number;
+  btcNetwork: BtcNetwork;
+}): RefundKeyCandidate[] {
+  const signingChildIndex = leafSigningChildIndex(leafId);
+  const paths: Array<{ path: string; label: string }> = [];
+  for (const account of accounts) {
+    paths.push(
+      { path: `m/8797555'/${account}'/0'`, label: "identity key" },
+      { path: `m/8797555'/${account}'`, label: "identity master" },
+      {
+        path: `m/8797555'/${account}'/1'/${signingChildIndex}'`,
+        label: "node signing key",
+      },
+      { path: `m/86'/${coinType}'/${account}'/0/0`, label: "BIP86 taproot" },
+    );
+  }
+
+  return paths.map(({ path, label }) => {
+    const derived = root.derive(path);
+    if (!derived.privateKey) {
+      throw new SweepError(`Derivation path did not produce a private key: ${path}`);
+    }
+    const privateKey = derived.privateKey;
+    const xonlyPublicKey = secp256k1.getPublicKey(privateKey, true).slice(1);
+    const payment = p2tr(xonlyPublicKey, undefined, btcNetwork);
+    return {
+      path,
+      label,
+      privateKey,
+      xonlyPublicKey,
+      address: payment.address,
+      script: payment.script,
+    };
+  });
+}
+
+function leafSigningChildIndex(leafId: string | null | undefined): number {
+  const hash = sha256(new TextEncoder().encode(String(leafId)));
+  return (
+    ((hash[0]! << 24) | (hash[1]! << 16) | (hash[2]! << 8) | hash[3]!) >>> 0
+  ) % 0x80000000;
+}
+
+function validatePackageJson(packages: unknown): PackageFile {
+  if (!packages || typeof packages !== "object" || Array.isArray(packages)) {
+    throw new SweepError("Package JSON must be an object");
+  }
+  const record = packages as Record<string, unknown>;
+  if (!Array.isArray(record.packages) || record.packages.length === 0) {
+    throw new SweepError("Package JSON must include at least one package");
+  }
+  for (const leafPackage of record.packages) {
+    if (!leafPackage?.leafId || !Array.isArray(leafPackage.txPackages)) {
+      throw new SweepError("Each package must include leafId and txPackages");
+    }
+  }
+  return record as PackageFile;
+}
+
+function lastTxPackage(leafPackage: LeafPackage): TxPackage | undefined {
+  return leafPackage.txPackages![leafPackage.txPackages!.length - 1];
+}
+
+function candidateAccounts(
+  accountNumber: AccountNumberInput,
+  defaults: number[],
+): number[] {
+  const values: number[] = [];
+  if (accountNumber !== undefined && accountNumber !== null && accountNumber !== "") {
+    const parsed = Number(accountNumber);
+    if (!Number.isSafeInteger(parsed) || parsed < 0) {
+      throw new SweepError("--account-number must be a non-negative integer");
+    }
+    values.push(parsed);
+  }
+  for (const value of defaults) {
+    if (!values.includes(value)) values.push(value);
+  }
+  return values;
+}
+
+function networkConfigFor(network: string): NetworkConfig {
+  const normalized = String(network ?? "").toUpperCase();
+  const config = NETWORKS.get(normalized);
+  if (!config) throw new SweepError(`Unsupported network for sweep: ${network}`);
+  return config;
+}
+
+function validateFeeRate(feeRate: number): number {
+  const value = Number(feeRate);
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new SweepError("--fee-rate must be a positive number");
+  }
+  return value;
+}
+
+function validateAddress(address: string, btcNetwork: BtcNetwork): void {
+  try {
+    const tx = new Transaction({ allowUnknownOutputs: true });
+    tx.addOutputAddress(address, 1n, btcNetwork);
+  } catch (error) {
+    throw new SweepError(`Invalid destination address for network: ${(error as Error).message}`);
+  }
+}

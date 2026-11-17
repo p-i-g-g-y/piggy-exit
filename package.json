@@ -1,6 +1,6 @@
 {
   "name": "piggy-exit",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Opens a Piggy emergency exit file in the browser. Nothing you open or type leaves the page.",
   "license": "MIT",
@@ -16,8 +16,12 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@buildonspark/spark-sdk": "0.14.0",
+    "@noble/curves": "2.4.0",
+    "@noble/hashes": "2.4.0",
     "@scure/bip32": "2.4.0",
     "@scure/bip39": "2.4.0",
+    "@scure/btc-signer": "1.8.1",
     "age-encryption": "0.3.1"
   },
   "devDependencies": {
@@ -26,5 +30,12 @@
     "vite": "8.3.5",
     "vite-plugin-singlefile": "2.3.4",
     "vitest": "5.1.0"
+  },
+  "//": [
+    "overrides: @buildonspark/spark-sdk depends on ua-parser-js ^2, which is AGPL-3.0;",
+    "1.x is MIT and the API the SDK uses is the same, so pin it (blink's exit tool does too)."
+  ],
+  "overrides": {
+    "ua-parser-js": "1.0.41"
   }
 }

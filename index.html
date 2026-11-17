@@ -49,15 +49,77 @@
     <p id="problem" class="problem" role="alert" hidden></p>
   </section>
 
-  <section id="result" class="card" hidden>
-    <h2 id="verdict" tabindex="-1"></h2>
-    <p id="holds"></p>
-    <p id="details" class="note"></p>
-    <p id="warning" class="problem" hidden></p>
-    <p id="keep"></p>
-    <p id="not-yet" class="note"></p>
-    <button id="again" class="secondary" type="button"></button>
+  <section id="app" class="card" hidden>
+    <h2 id="app-title" tabindex="-1"></h2>
+    <p id="app-body"></p>
+    <a id="app-get" class="button primary" href="https://pig.gy/download" rel="noopener noreferrer"></a>
+    <button id="app-cant" class="secondary" type="button"></button>
   </section>
+
+  <section id="spark" class="card" hidden>
+    <h2 id="spark-title" tabindex="-1"></h2>
+    <p id="spark-ready"></p>
+    <p id="spark-incoming" class="note" hidden></p>
+    <form id="address-form" novalidate>
+      <div class="field">
+        <label id="address-label" for="address"></label>
+        <input id="address" name="address" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
+        <p id="address-hint" class="note"></p>
+      </div>
+      <button id="get-fee" class="primary" type="submit"></button>
+    </form>
+    <div id="quote" hidden>
+      <p id="quote-line" class="summary"></p>
+      <button id="send" class="primary" type="button"></button>
+      <button id="other-address" class="secondary" type="button"></button>
+    </div>
+    <p id="spark-status" class="note" aria-live="polite"></p>
+    <p id="spark-problem" class="problem" role="alert" hidden></p>
+  </section>
+
+  <section id="sent" class="card" hidden>
+    <h2 id="sent-title" tabindex="-1"></h2>
+    <p id="sent-body"></p>
+    <p id="sent-watch" class="note"></p>
+    <ul id="sent-list" class="txids"></ul>
+  </section>
+
+  <section id="bitcoin" class="card" hidden>
+    <h2 id="bitcoin-title" tabindex="-1"></h2>
+    <p id="bitcoin-body"></p>
+    <p id="slow-back" class="summary" hidden></p>
+    <p id="slow-stranded" class="note" hidden></p>
+    <div id="slow-fund" hidden>
+      <p id="slow-fund-line"></p>
+      <p id="slow-fee-address" class="address"></p>
+      <button id="slow-copy" class="secondary" type="button"></button>
+      <a id="slow-open-wallet" class="button secondary" rel="noopener noreferrer"></a>
+    </div>
+    <div id="slow-wait" hidden>
+      <p id="slow-wait-line"></p>
+      <a id="slow-calendar" class="button secondary" download="take-your-bitcoin-back.ics"></a>
+    </div>
+    <form id="slow-sweep" hidden novalidate>
+      <p id="slow-ready" class="summary"></p>
+      <div class="field">
+        <label id="slow-address-label" for="slow-address"></label>
+        <input id="slow-address" name="slow-address" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
+        <p id="slow-address-hint" class="note"></p>
+      </div>
+      <button id="slow-get-fee" class="primary" type="submit"></button>
+    </form>
+    <div id="slow-quote" hidden>
+      <p id="slow-quote-line" class="summary"></p>
+      <button id="slow-send" class="primary" type="button"></button>
+      <button id="slow-other" class="secondary" type="button"></button>
+    </div>
+    <p id="slow-status" class="note" aria-live="polite"></p>
+    <p id="slow-note" class="note" hidden></p>
+    <p id="slow-problem" class="problem" role="alert" hidden></p>
+    <button id="ask-again" class="secondary" type="button"></button>
+  </section>
+
+  <button id="start-over" class="secondary" type="button" hidden></button>
 
   <footer class="foot">
     <p><span id="version"></span> · <a id="source" href="https://github.com/p-i-g-g-y/piggy-exit" rel="noopener noreferrer"></a></p>
