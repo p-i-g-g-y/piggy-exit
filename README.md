@@ -33,9 +33,9 @@ The same file, with the same SHA-256, in three places:
 
 - Everything happens in the browser. There is no server of its own, no analytics and nothing
   stored: the words live in memory until the bitcoin has gone out or the person starts over.
-- The page is one HTML file with every script and style inside. Its Content-Security-Policy
-  allows exactly those (by SHA-256), WebAssembly (Spark's signing) and connections to these hosts
-  only:
+- The page is one HTML file with every script, style and font inside. Its
+  Content-Security-Policy allows exactly those (by SHA-256), WebAssembly (Spark's signing), its
+  two fonts as `data:` URLs, and connections to these hosts only:
   - `api.pig.gy`: whether Piggy answers (`GET /v1/exit/status`, nothing sent).
   - Spark's three mainnet signing operators and `api.lightspark.com`: the cooperative exit.
   - `blockstream.info` (Esplora) and `mempool.space`: the unilateral exit's coins, fees and
@@ -49,7 +49,7 @@ The same file, with the same SHA-256, in three places:
 ## Check a copy
 
 ```sh
-shasum -a 256 piggy-exit-0.2.0.html                              # a saved copy
+shasum -a 256 piggy-exit-0.2.1.html                              # a saved copy
 curl -s https://p-i-g-g-y.github.io/piggy-exit/ | shasum -a 256  # the hosted page
 ```
 
@@ -70,6 +70,19 @@ The tests use files written by Piggy's apps and by the age CLI, and Spark identi
 Spark SDKs' own test vectors. None of them come from this page's own code (`test/fixtures.ts`).
 The unilateral exit's tests run blink's engine and the real Spark SDK on synthetic trees; only the
 chain is faked (`test/slow-sdk.test.ts`).
+
+## Fonts
+
+The page looks like pig.gy's own pages (the faucet, the migration page), so it carries their two
+display fonts inside it, both under the SIL Open Font License 1.1:
+
+- **Piggy Speech** (`src/fonts/PiggySpeech.woff2`): ARCO Typography by Rafael Olivo Díaz and
+  Denis Ignatov, with Piggy's ₿ glyph added. The same file Piggy's marketing pages use.
+- **Space Mono Bold** (`src/fonts/SpaceMono-Bold.woff2`): by The Space Mono Project Authors,
+  cut down to printable ASCII and a few punctuation marks.
+
+Each font's license is next to it (`*-LICENSE.txt`) and inside the font file itself. Body text uses
+the device's own font.
 
 ## The unilateral exit engine
 

@@ -1,27 +1,49 @@
-/* Piggy's Fusion purple is the one highlight; paragraphs use the full text color for contrast. */
-:root {
-  color-scheme: light dark;
-  --bg: #ffffff;
-  --surface: #f6f5fb;
-  --text: #160e35;
-  --muted: #4b4566;
-  --line: #d9d5ec;
-  --accent: #5534cb;
-  --accent-text: #ffffff;
-  --problem: #b42318;
+/*
+ * Piggy's web look (pig.gy/faucet, pig.gy/migration): the deep night background, Piggy Speech
+ * headlines in capitals, Space Mono for the small labels, quiet glass cards and Fusion purple
+ * pills. Dark only, like those pages. Text keeps WCAG AA contrast: body copy at 72% white,
+ * notes at 55%, error text a lighter shade of the site's red, and buttons on Fusion 600 (the
+ * site's hover shade), where white text clears 4.5:1.
+ *
+ * Fonts, embedded so every copy stays one self-contained file (CSP: font-src data:):
+ * - Piggy Speech: ARCO Typography (Rafael Olivo Díaz, Denis Ignatov) with Piggy's bitcoin
+ *   glyph, SIL Open Font License 1.1 (src/fonts/PiggySpeech-LICENSE.txt, also in the font).
+ * - Space Mono Bold, subset: The Space Mono Project Authors, SIL Open Font License 1.1
+ *   (src/fonts/SpaceMono-LICENSE.txt, also in the font).
+ */
+@font-face {
+  font-family: "Piggy Speech";
+  src: url("./fonts/PiggySpeech.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0a0618;
-    --surface: #160e35;
-    --text: #f1effb;
-    --muted: #b9b2d6;
-    --line: #2a1a65;
-    --accent: #9985e0;
-    --accent-text: #0a0618;
-    --problem: #ff8a7a;
-  }
+@font-face {
+  font-family: "Space Mono";
+  src: url("./fonts/SpaceMono-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: dark;
+  --night: #0f0b1e;
+  --white: #ffffff;
+  --body: rgba(255, 255, 255, 0.72);
+  --muted: rgba(255, 255, 255, 0.55);
+  --line: rgba(255, 255, 255, 0.1);
+  --card: rgba(255, 255, 255, 0.03);
+  --field: rgba(255, 255, 255, 0.05);
+  --fusion-400: #9985e0;
+  --fusion-600: #5534cb;
+  --fusion-700: #40289a;
+  --destructive: #db4e66;
+  --destructive-text: #e8677c;
+  --display: "Piggy Speech", ui-rounded, -apple-system, BlinkMacSystemFont, sans-serif;
+  --label: "Space Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --code: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 [hidden] {
@@ -32,37 +54,62 @@
   box-sizing: border-box;
 }
 
+html {
+  background: var(--night);
+}
+
 body {
   margin: 0;
-  background: var(--bg);
-  color: var(--text);
-  font: 17px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background: var(--night);
+  color: var(--white);
+  font: 16px/1.6 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   -webkit-text-size-adjust: 100%;
 }
 
 .page {
-  max-width: 34rem;
+  max-width: 28rem;
+  min-height: 100vh;
   margin: 0 auto;
-  padding: 32px 16px 48px;
+  padding: 64px 24px 40px;
 }
 
-.brand {
-  margin: 0 0 8px;
-  color: var(--accent);
-  font-weight: 700;
-  letter-spacing: 0.02em;
+/* The hero, as on the faucet: a small Space Mono line in Fusion, then the headline. */
+.head {
+  text-align: center;
+}
+
+.eyebrow {
+  margin: 0;
+  color: var(--fusion-400);
+  font: 700 0.8125rem/1.4 var(--label);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
 }
 
 h1 {
-  margin: 0 0 12px;
-  font-size: 2rem;
-  line-height: 1.15;
+  margin: 12px 0 0;
+  color: var(--white);
+  font: 400 2.25rem/1.05 var(--display);
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+}
+
+.lead {
+  max-width: 24rem;
+  margin: 16px auto 0;
+  color: var(--body);
+  font-size: 1rem;
+  line-height: 1.625;
 }
 
 h2 {
-  margin: 0 0 8px;
-  font-size: 1.3rem;
-  line-height: 1.3;
+  margin: 0 0 10px;
+  color: var(--white);
+  font: 400 1.375rem/1.15 var(--display);
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
 }
 
 h2:focus {
@@ -71,17 +118,16 @@ h2:focus {
 
 p {
   margin: 0 0 12px;
-}
-
-.lead {
-  font-size: 1.05rem;
+  color: var(--body);
+  font-size: 0.9375rem;
 }
 
 .card {
-  margin-top: 20px;
+  margin-top: 32px;
   padding: 20px;
+  border: 1px solid var(--line);
   border-radius: 16px;
-  background: var(--surface);
+  background: var(--card);
 }
 
 .card > :last-child {
@@ -89,39 +135,88 @@ p {
 }
 
 .summary {
+  color: var(--white);
   font-weight: 600;
 }
 
 .note {
   color: var(--muted);
-  font-size: 0.95rem;
+  font-size: 0.875rem;
+}
+
+/* The file's amount, big like the balance on the migration page. */
+.amount {
+  margin: 0 0 2px;
+  color: var(--white);
+  font: 400 2rem/1.1 var(--display);
+  letter-spacing: 0.025em;
 }
 
 .problem {
-  color: var(--problem);
-  font-weight: 600;
+  padding: 12px 16px;
+  border: 1px solid rgba(219, 78, 102, 0.3);
+  border-radius: 12px;
+  background: rgba(219, 78, 102, 0.1);
+  color: var(--destructive-text);
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+/* Every status line is work in progress: the migration page's spinner goes in front. */
+.status:not(:empty)::before {
+  content: "";
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  margin-right: 10px;
+  vertical-align: -2px;
+  border: 2px solid var(--fusion-400);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .field {
-  margin-bottom: 14px;
+  margin-bottom: 16px;
 }
 
 label {
   display: block;
   margin-bottom: 6px;
-  font-weight: 600;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  font-weight: 500;
 }
 
 input,
 textarea {
   width: 100%;
-  padding: 12px;
+  padding: 14px 16px;
   border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--bg);
-  color: var(--text);
+  border-radius: 12px;
+  background: var(--field);
+  color: var(--white);
   font: inherit;
   font-size: 16px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: rgba(255, 255, 255, 0.2);
+}
+
+input:focus,
+textarea:focus {
+  border-color: var(--fusion-400);
+  box-shadow: 0 0 0 3px rgba(153, 133, 224, 0.2);
 }
 
 input[readonly] {
@@ -132,16 +227,90 @@ textarea {
   resize: vertical;
 }
 
+.field .note {
+  margin: 8px 0 0;
+}
+
+/* Pills, as on every pig.gy page. */
+button,
 .button {
+  display: block;
+  width: 100%;
+  min-height: 50px;
+  margin: 0 0 12px;
+  padding: 14px 20px;
+  border-radius: 9999px;
+  font: inherit;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.375;
   text-align: center;
   text-decoration: none;
-  box-sizing: border-box;
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s, opacity 0.15s;
+}
+
+.primary {
+  border: 0;
+  background: var(--fusion-600);
+  color: var(--white);
+}
+
+.primary:hover {
+  background: var(--fusion-700);
+}
+
+.primary:active {
+  background: #2a1a65;
+}
+
+.secondary {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: transparent;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.secondary:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+:focus-visible {
+  outline: 2px solid var(--fusion-400);
+  outline-offset: 3px;
+}
+
+a {
+  color: var(--fusion-400);
+  text-underline-offset: 3px;
+}
+
+/* The fee address: easy to check by eye, one tap selects all of it. */
+.address {
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--field);
+  color: var(--white);
+  font: 0.9375rem/1.45 var(--code);
+  word-break: break-all;
+  user-select: all;
+  -webkit-user-select: all;
 }
 
 .txid {
-  font: 0.85rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
-  word-break: break-all;
   color: var(--muted);
+  font: 0.8125rem/1.45 var(--code);
+  word-break: break-all;
+}
+
+a.txid {
+  color: var(--fusion-400);
 }
 
 .txids {
@@ -154,69 +323,41 @@ textarea {
   margin-bottom: 8px;
 }
 
-a.txid {
-  color: var(--accent);
-}
-
-/* The fee address: easy to check by eye, one tap selects all of it. */
-.address {
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--bg);
-  font: 0.95rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
-  word-break: break-all;
-  user-select: all;
-  -webkit-user-select: all;
-}
-
 #start-over {
-  margin-top: 20px;
+  margin-top: 24px;
 }
 
-button,
-.button {
-  display: block;
-  width: 100%;
-  min-height: 48px;
-  margin: 0 0 12px;
-  padding: 12px 16px;
-  border-radius: 12px;
-  font: inherit;
-  font-weight: 650;
-  cursor: pointer;
-}
-
-button:disabled {
-  opacity: 0.6;
-  cursor: progress;
-}
-
-.primary,
-a.primary {
-  border: 0;
-  background: var(--accent);
-  color: var(--accent-text);
-}
-
-.secondary,
-a.secondary {
-  border: 1px solid var(--line);
-  background: transparent;
-  color: var(--text);
-}
-
-:focus-visible {
-  outline: 3px solid var(--accent);
-  outline-offset: 2px;
-}
-
-a {
-  color: var(--accent);
-}
-
+/* The sign-off, as on the faucet and migration pages. */
 .foot {
-  margin-top: 28px;
-  color: var(--muted);
-  font-size: 0.9rem;
+  margin-top: 56px;
+  text-align: center;
+}
+
+.tagline {
+  margin: 0 0 10px;
+  color: rgba(255, 255, 255, 0.18);
+  font: 700 0.6875rem/1.4 var(--label);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.version {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.5);
+  font: 700 0.6875rem/1.6 var(--label);
+  letter-spacing: 0.05em;
+}
+
+@media (min-width: 640px) {
+  h1 {
+    font-size: 3rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before {
+    animation: none !important;
+    transition: none !important;
+  }
 }

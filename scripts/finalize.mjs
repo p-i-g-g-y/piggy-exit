@@ -61,6 +61,8 @@ const csp = [
   "default-src 'none'",
   `script-src ${sha256(scripts[0])} 'wasm-unsafe-eval'`,
   `style-src ${sha256(styles[0])}`,
+  // The page's two fonts ride inside its style as data: URLs (Piggy Speech, Space Mono; OFL).
+  "font-src data:",
   `connect-src ${CONNECT.join(" ")}`,
   "form-action 'none'",
   "base-uri 'none'",

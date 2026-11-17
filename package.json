@@ -1,6 +1,6 @@
 {
   "name": "piggy-exit",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Opens a Piggy emergency exit file in the browser. Nothing you open or type leaves the page.",
   "license": "MIT",

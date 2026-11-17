@@ -3,6 +3,7 @@
  * "sats"), "bitcoin" for the money, no banking words. test/copy.test.ts holds the rules.
  */
 export const copy = {
+  eyebrow: "Piggy emergency exit",
   pageTitle: "Take your bitcoin back",
   lead: "Open your Piggy emergency exit file to take your bitcoin back, even if Piggy is gone. Your file and your password never leave this device.",
   noScript: "This page needs JavaScript to open your file.",
@@ -10,7 +11,7 @@ export const copy = {
   whereIsIt: "On iPhone it's in Files › iCloud Drive › Piggy. On Android it's wherever you saved it.",
   notExitFile: "This isn't a Piggy exit file.",
   testNetwork: "This file is for a test network, not real bitcoin.",
-  summary: (amount: string, date: string | null): string => (date ? `Saved ${date} · ${amount}` : amount),
+  savedOn: (date: string): string => `Saved ${date}`,
   savedAs: "Saved as",
   password: "Password",
   typePassword: "Type the password for this file.",
@@ -97,6 +98,7 @@ export const copy = {
 
   startOver: "Start over",
   framed: "Open this page on its own, not inside another site.",
+  tagline: "Yours, even without Piggy.",
   footer: (version: string): string => `Piggy exit ${version}`,
   source: "open source",
 }
@@ -104,7 +106,7 @@ export const copy = {
 /** Every fixed line, plus samples of the built ones, for the voice test. */
 export const allLines = (): string[] => [
   ...Object.values(copy).filter((value): value is string => typeof value === "string"),
-  copy.summary("₿72,965", "Nov 17, 2026"),
+  copy.savedOn("Nov 17, 2026"),
   copy.sparkReady("₿72,965"),
   copy.sparkIncoming("₿2,100"),
   copy.quoteLine("₿71,800", "₿1,165"),
@@ -127,5 +129,5 @@ export const allLines = (): string[] => [
   copy.slowQuote("₿69,900", "₿1,400"),
   copy.slowStuck(1),
   copy.slowStuck(2),
-  copy.footer("0.2.0"),
+  copy.footer("0.2.1"),
 ]

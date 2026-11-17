@@ -34,7 +34,8 @@ function start(): void {
     file: byId<HTMLInputElement>("file"),
     pickProblem: byId("pick-problem"),
     opened: byId("opened"),
-    summary: byId("summary"),
+    summaryAmount: byId("summary-amount"),
+    summaryDate: byId("summary-date"),
     unlock: byId<HTMLFormElement>("unlock"),
     whoRow: byId("who-row"),
     who: byId<HTMLInputElement>("who"),
@@ -74,6 +75,7 @@ function start(): void {
   }
 
   const text: Record<string, string> = {
+    eyebrow: copy.eyebrow,
     title: copy.pageTitle,
     lead: copy.lead,
     choose: copy.choose,
@@ -97,6 +99,7 @@ function start(): void {
     "bitcoin-body": copy.bitcoinBody,
     "ask-again": copy.askAgain,
     "start-over": copy.startOver,
+    tagline: copy.tagline,
     version: copy.footer(__VERSION__),
     source: copy.source,
   }
@@ -192,7 +195,8 @@ function start(): void {
   const showFile = (opened: ExitFile, text: string) => {
     raw = text
     file = opened
-    ui.summary.textContent = copy.summary(bitcoin(opened.totalSats), opened.createdAt ? savedOn(opened.createdAt) : null)
+    ui.summaryAmount.textContent = bitcoin(opened.totalSats)
+    say(ui.summaryDate, opened.createdAt ? copy.savedOn(savedOn(opened.createdAt)) : null)
     ui.pick.hidden = true
     ui.opened.hidden = false
     ui.unlock.hidden = true
