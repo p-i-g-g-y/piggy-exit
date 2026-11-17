@@ -1,0 +1,38 @@
+{
+    "accountIndex": 1,
+    "appVersion": "test-1.0",
+    "balances": {
+        "btcSats": "4608"
+    },
+    "createdAt": "2026-11-17T17:12:20Z",
+    "leaves": [
+        {
+            "id": "leaf-1",
+            "status": "AVAILABLE",
+            "treeNodeHex": "aabb",
+            "valueSats": 4096
+        },
+        {
+            "id": "leaf-2",
+            "status": "AVAILABLE",
+            "treeNodeHex": "ccdd",
+            "valueSats": 512
+        }
+    ],
+    "network": "MAINNET",
+    "nodes": [
+        {
+            "id": "root",
+            "treeNodeHex": "eeff"
+        }
+    ],
+    "operatorSet": "spark-sdk",
+    "schema": "spark.unilateral-exit-bundle.v1",
+    "seedPhrase": {
+        "age": "-----BEGIN AGE ENCRYPTED FILE-----\nYWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IHNjcnlwdCAyZlZ0YXBmRmgxL3B0RmdM\nV1o1NTZRIDE4CkZoWml6N2ZDbStmL1NzcDdlV3NBQVpFQklhUllLbGZ5SmFVcG1v\naFNHTVUKLS0tIG56ekczV0N1VkR5OUh2U1ZUbWNrRVY4Y3gxeWNVSXZpUHJ2N0lS\nUDRwOU0KimYMe2h17FFRDrgfaHZO9tQShA88inb0OMFGAHR6SxBNJhqso2kj/o7x\nNXf8vrvAu6hSHWppfJ8Gsjcv/oywENROt507fGgmH0LHUrgZmrhpgXQI3LrJ8vjd\n2V4E6a04+O6NUJCxbGobPkza9p/bN/2Y0/o=\n-----END AGE ENCRYPTED FILE-----\n",
+        "format": "age",
+        "howToOpen": "Locked with the password you set in Piggy. Open it with age (age-encryption.org): jq -r .seedPhrase.age <this file> | age --decrypt"
+    },
+    "sparkSdkVersion": "p-i-g-g-y/spark-kotlin-sdk#v0.3.1",
+    "walletIdentityPublicKey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}

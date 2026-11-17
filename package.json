@@ -1,0 +1,30 @@
+{
+  "name": "piggy-exit",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Opens a Piggy emergency exit file in the browser. Nothing you open or type leaves the page.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build && node scripts/finalize.mjs",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@scure/bip32": "2.4.0",
+    "@scure/bip39": "2.4.0",
+    "age-encryption": "0.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.6",
+    "typescript": "7.0.2",
+    "vite": "8.3.5",
+    "vite-plugin-singlefile": "2.3.4",
+    "vitest": "5.1.0"
+  }
+}

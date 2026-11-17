@@ -1,0 +1,34 @@
+{
+  "accountIndex": 1,
+  "appVersion": "test",
+  "balances": {
+    "btcSats": "69632"
+  },
+  "createdAt": "2026-11-17T12:00:00Z",
+  "leaves": [
+    {
+      "id": "leaf-1",
+      "status": "AVAILABLE",
+      "treeNodeHex": "00",
+      "valueSats": 65536
+    },
+    {
+      "id": "leaf-2",
+      "status": "AVAILABLE",
+      "treeNodeHex": "01",
+      "valueSats": 4096
+    }
+  ],
+  "network": "MAINNET",
+  "nodes": [],
+  "operatorSet": "spark-sdk",
+  "schema": "spark.unilateral-exit-bundle.v1",
+  "seedPhrase": {
+    "age": "-----BEGIN AGE ENCRYPTED FILE-----\nYWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IHNjcnlwdCAyMmxLQkF3OUpnSlhZbzlm\nZm5Hcld3IDE4CkJXaUxVejF6R3FERUp3bmltd0lHc08vQTY4YXJNbzFTaDRpMlFN\nRkw1NjQKLS0tICtId0syNktlUEtnaW5Td0ordEFpZ29UNkoxTng0SktIN3VHY3N4\nK2dEWTQKTULk0FSiAOBEYMuyihA7UU6VV+rrap3/zp8N/u790VQFQCBq2QqmEms6\nlTPTRReLYe4JtbkzMetOBHXtG27ZtzhO4Bbi9e5qSiU2pPTW+ChZ14Cf+X7+rGYQ\nZ4ZDwzeH8pikmT9dA/+rmXKocK7NhO4xWV3yFJ862aoYh3M=\n-----END AGE ENCRYPTED FILE-----\n",
+    "format": "age",
+    "howToOpen": "Locked with the password you set in Piggy, saved in the Passwords app under pig.gy as “Archi exit file”. Open it with age (age-encryption.org): jq -r .seedPhrase.age <this file> | age --decrypt",
+    "passwordUser": "Archi exit file"
+  },
+  "sparkSdkVersion": "test",
+  "walletIdentityPublicKey": "023ed9859c8b13f3797179bbe450587301d478c8259f6bec146ae6502318cc940a"
+}

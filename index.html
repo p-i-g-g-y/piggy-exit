@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="light dark">
+<title>Piggy exit</title>
+<script type="module" src="/src/main.ts"></script>
+</head>
+<body>
+<main class="page">
+  <header class="head">
+    <p class="brand">Piggy</p>
+    <h1 id="title"></h1>
+    <p id="lead" class="lead"></p>
+    <noscript><p class="problem">This page needs JavaScript to open your file.</p></noscript>
+  </header>
+
+  <section id="pick" class="card">
+    <button id="choose" class="primary" type="button"></button>
+    <input id="file" type="file" accept=".json,application/json" hidden>
+    <p id="where" class="note"></p>
+    <p id="pick-problem" class="problem" role="alert" hidden></p>
+  </section>
+
+  <section id="opened" class="card" hidden>
+    <p id="summary" class="summary"></p>
+    <form id="unlock" hidden novalidate>
+      <div id="who-row" class="field" hidden>
+        <label id="who-label" for="who"></label>
+        <input id="who" name="username" autocomplete="username" readonly>
+      </div>
+      <div class="field">
+        <label id="password-label" for="password"></label>
+        <input id="password" name="password" type="password" autocomplete="current-password" autocapitalize="none" spellcheck="false">
+      </div>
+      <button id="open" class="primary" type="submit"></button>
+    </form>
+    <form id="words" hidden novalidate>
+      <p id="words-note" class="note"></p>
+      <div class="field">
+        <label id="phrase-label" for="phrase"></label>
+        <textarea id="phrase" rows="3" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"></textarea>
+      </div>
+      <button id="check" class="primary" type="submit"></button>
+    </form>
+    <p id="status" class="note" aria-live="polite"></p>
+    <p id="problem" class="problem" role="alert" hidden></p>
+  </section>
+
+  <section id="result" class="card" hidden>
+    <h2 id="verdict" tabindex="-1"></h2>
+    <p id="holds"></p>
+    <p id="details" class="note"></p>
+    <p id="warning" class="problem" hidden></p>
+    <p id="keep"></p>
+    <p id="not-yet" class="note"></p>
+    <button id="again" class="secondary" type="button"></button>
+  </section>
+
+  <footer class="foot">
+    <p><span id="version"></span> · <a id="source" href="https://github.com/p-i-g-g-y/piggy-exit" rel="noopener noreferrer"></a></p>
+  </footer>
+</main>
+</body>
+</html>
